@@ -57,6 +57,8 @@ export default function WebDAVBackup() {
       const success = await webdavService.saveConfig(config)
       if (success) {
         toast.success('配置保存成功')
+        // 重新加载配置以更新界面状态
+        await loadConfig()
         if (config.enabled) {
           loadBackupFiles()
         }
