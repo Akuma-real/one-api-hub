@@ -624,34 +624,31 @@ class WebDAVService {
 
       console.log(`[WebDAV] ${trigger}，开始自动同步`)
       
-      // 异步执行同步，不阻塞主流程
-      this.uploadBackup(trigger).then(result => {
+      // 使用 await 确保同步操作完成并正确记录日志
+      try {
+        const result = await this.uploadBackup(trigger)
         if (result.success) {
-          console.log(`[WebDAV] ${trigger}同步成功`)
+          console.log(`[WebDAV] ${trigger}同步成功:`, result.message)
         } else {
           console.error(`[WebDAV] ${trigger}同步失败:`, result.message)
-          // 记录失败日志，但不抛出错误
-          this.addSyncLog(trigger, false, result.message).catch(logError => {
-            console.error('[WebDAV] 记录同步日志失败:', logError)
-          })
         }
-      }).catch(error => {
+      } catch (error) {
         const errorMessage = error.message || '未知错误'
         console.error(`[WebDAV] ${trigger}同步异常:`, errorMessage)
         
         // 记录异常日志
-        this.addSyncLog(trigger, false, `同步异常: ${errorMessage}`).catch(logError => {
-          console.error('[WebDAV] 记录同步日志失败:', logError)
-        })
-      })
+        await this.addSyncLog(trigger, false, `同步异常: ${errorMessage}`)
+      }
     } catch (error) {
       const errorMessage = error.message || '未知错误'
       console.error(`[WebDAV] ${trigger}同步检查失败:`, errorMessage)
       
       // 记录检查失败日志
-      this.addSyncLog(trigger, false, `同步检查失败: ${errorMessage}`).catch(logError => {
+      try {
+        await this.addSyncLog(trigger, false, `同步检查失败: ${errorMessage}`)
+      } catch (logError) {
         console.error('[WebDAV] 记录同步日志失败:', logError)
-      })
+      }
     }
   }
 }
