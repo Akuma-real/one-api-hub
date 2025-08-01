@@ -1,5 +1,6 @@
 import { Storage } from "@plasmohq/storage";
 import { refreshAccountData } from './apiService';
+import { webdavService } from './webdavService';
 import type { 
   SiteAccount, 
   StorageConfig, 
@@ -75,7 +76,7 @@ class AccountStorageService {
 
       accounts.push(newAccount);
       console.log('[AccountStorage] 准备保存账号，总数量:', accounts.length);
-      await this.saveAccounts(accounts);
+      await this.saveAccounts(accounts, `添加账号: ${accountData.site_name}`);
       console.log('[AccountStorage] 账号保存成功，ID:', newAccount.id);
       
       return newAccount.id;
@@ -97,13 +98,24 @@ class AccountStorageService {
         throw new Error(`账号 ${id} 不存在`);
       }
 
+      const oldAccount = accounts[index];
       accounts[index] = {
         ...accounts[index],
         ...updates,
         updated_at: Date.now()
       };
 
-      await this.saveAccounts(accounts);
+      // 生成详细的更新描述
+      let updateDescription = `更新账号: ${oldAccount.site_name}`;
+      if (updates.account_info) {
+        updateDescription += ' (数据刷新)';
+      } else if (updates.site_name) {
+        updateDescription += ` -> ${updates.site_name}`;
+      } else if (updates.health_status) {
+        updateDescription += ` (状态: ${updates.health_status})`;
+      }
+
+      await this.saveAccounts(accounts, updateDescription);
       return true;
     } catch (error) {
       console.error('更新账号失败:', error);
@@ -117,6 +129,7 @@ class AccountStorageService {
   async deleteAccount(id: string): Promise<boolean> {
     try {
       const accounts = await this.getAllAccounts();
+      const accountToDelete = accounts.find(account => account.id === id);
       const filteredAccounts = accounts.filter(account => account.id !== id);
       
       if (filteredAccounts.length === accounts.length) {
@@ -124,7 +137,8 @@ class AccountStorageService {
         throw new Error(`账号 ${id} 不存在`);
       }
 
-      await this.saveAccounts(filteredAccounts);
+      const accountName = accountToDelete ? accountToDelete.site_name : id;
+      await this.saveAccounts(filteredAccounts, `删除账号: ${accountName}`);
       return true;
     } catch (error) {
       console.error('删除账号失败:', error);
@@ -318,6 +332,16 @@ class AccountStorageService {
         ...data,
         last_updated: Date.now()
       });
+      
+      // 触发WebDAV数据变动同步
+      try {
+        const accountCount = data.accounts?.length || 0;
+        await webdavService.syncOnDataChange(`导入数据: ${accountCount}个账号`);
+      } catch (error) {
+        console.error('[AccountStorage] WebDAV同步失败:', error);
+        // 不影响主流程，继续执行
+      }
+      
       return true;
     } catch (error) {
       console.error('导入数据失败:', error);
@@ -343,7 +367,7 @@ class AccountStorageService {
   /**
    * 保存账号数据
    */
-  private async saveAccounts(accounts: SiteAccount[]): Promise<void> {
+  private async saveAccounts(accounts: SiteAccount[], trigger?: string): Promise<void> {
     console.log('[AccountStorage] 开始保存账号数据，数量:', accounts.length);
     const config: StorageConfig = {
       accounts,
@@ -358,6 +382,14 @@ class AccountStorageService {
     
     await this.storage.set(STORAGE_KEYS.ACCOUNTS, config);
     console.log('[AccountStorage] 账号数据保存完成');
+    
+    // 触发WebDAV数据变动同步
+    try {
+      await webdavService.syncOnDataChange(trigger || '数据变动');
+    } catch (error) {
+      console.error('[AccountStorage] WebDAV同步失败:', error);
+      // 不影响主流程，继续执行
+    }
   }
 
   /**

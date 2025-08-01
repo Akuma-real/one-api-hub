@@ -11,13 +11,26 @@ import {
 import { accountStorage } from "../../services/accountStorage"
 import { userPreferences } from "../../services/userPreferences"
 import { webdavService } from "../../services/webdavService"
-import { WebDAVConfig } from "../../types"
+import type { WebDAVConfig } from "../../types"
 import toast from 'react-hot-toast'
 
 export default function ImportExport() {
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [importData, setImportData] = useState("")
+
+  // 生成统一的备份文件名格式（与WebDAV保持一致）
+  const generateBackupFilename = (prefix: string = 'backup') => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = String(now.getMonth() + 1).padStart(2, '0')
+    const day = String(now.getDate()).padStart(2, '0')
+    const hours = String(now.getHours()).padStart(2, '0')
+    const minutes = String(now.getMinutes()).padStart(2, '0')
+    const seconds = String(now.getSeconds()).padStart(2, '0')
+    
+    return `${prefix}-${year}-${month}-${day}_${hours}-${minutes}-${seconds}.json`
+  }
 
   // WebDAV 快速备份
   const handleWebdavBackup = async () => {
@@ -66,7 +79,7 @@ export default function ImportExport() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `one-api-Hub-backup-${new Date().toISOString().split('T')[0]}.json`
+      link.download = generateBackupFilename('one-api-Hub-backup')
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -100,7 +113,7 @@ export default function ImportExport() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `accounts-backup-${new Date().toISOString().split('T')[0]}.json`
+      link.download = generateBackupFilename('accounts-backup')
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -134,7 +147,7 @@ export default function ImportExport() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `preferences-backup-${new Date().toISOString().split('T')[0]}.json`
+      link.download = generateBackupFilename('preferences-backup')
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)

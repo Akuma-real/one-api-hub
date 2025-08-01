@@ -1,4 +1,4 @@
-  import { useState } from "react"
+import { useState, useEffect } from "react"
 import { 
   CloudIcon,
   Cog6ToothIcon,
@@ -7,7 +7,8 @@ import {
   TrashIcon,
   CheckCircleIcon,
   ExclamationTriangleIcon,
-  InformationCircleIcon
+  InformationCircleIcon,
+  ClockIcon
 } from "@heroicons/react/24/outline"
 import { webdavService } from "../../services/webdavService"
 import type { WebDAVConfig, WebDAVResult } from "../../types"
@@ -20,9 +21,8 @@ export default function WebDAVBackup() {
     server_url: '',
     username: '',
     password: '',
-    backup_path: '/backups/one-api-hub/',
-    auto_backup: false,
-    backup_interval: 24,
+    backup_path: '/webdav',
+    auto_sync_on_change: false,
     last_backup_time: 0
   })
   
@@ -30,6 +30,12 @@ export default function WebDAVBackup() {
   const [isTesting, setIsTesting] = useState(false)
   const [backupFiles, setBackupFiles] = useState<string[]>([])
   const [showPassword, setShowPassword] = useState(false)
+  const [syncLogs, setSyncLogs] = useState<Array<{
+    timestamp: number
+    trigger: string
+    success: boolean
+    message: string
+  }>>([])
 
   // 加载配置
   const loadConfig = async () => {
@@ -95,15 +101,27 @@ export default function WebDAVBackup() {
     }
   }
 
+  // 加载同步日志
+  const loadSyncLogs = async () => {
+    try {
+      const result = await chrome.storage.local.get(['webdav_sync_logs'])
+      const logs = result.webdav_sync_logs || []
+      setSyncLogs(logs.slice(-20)) // 只显示最近20条记录
+    } catch (error) {
+      console.error('加载同步日志失败:', error)
+    }
+  }
+
   // 立即备份
   const handleBackup = async () => {
     try {
       setIsLoading(true)
-      const result = await webdavService.uploadBackup()
+      const result = await webdavService.uploadBackup('手动备份')
       if (result.success) {
         toast.success(result.message)
         loadBackupFiles()
         loadConfig() // 重新加载配置以更新最后备份时间
+        loadSyncLogs() // 重新加载日志
       } else {
         toast.error(result.message)
       }
@@ -178,10 +196,51 @@ export default function WebDAVBackup() {
     }
   }
 
-  // 初始加载
-  if (!config.server_url && !isLoading) {
+  // 使用useEffect来正确加载配置
+  useEffect(() => {
     loadConfig()
-  }
+    loadSyncLogs()
+
+    // 监听存储变化，当其他页面更新配置时自动刷新
+    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+      if (areaName === 'local' && changes.webdav_config) {
+        console.log('检测到WebDAV配置变化，重新加载配置')
+        loadConfig()
+      }
+      if (areaName === 'local' && changes.webdav_sync_logs) {
+        console.log('检测到同步日志变化，重新加载日志')
+        loadSyncLogs()
+      }
+    }
+
+    // 监听页面可见性变化，当页面重新可见时刷新配置
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('页面重新可见，刷新WebDAV配置')
+        loadConfig()
+        loadSyncLogs()
+      }
+    }
+
+    // 监听窗口焦点变化
+    const handleFocus = () => {
+      console.log('窗口获得焦点，刷新WebDAV配置')
+      loadConfig()
+      loadSyncLogs()
+    }
+
+    // 添加事件监听器
+    chrome.storage.onChanged.addListener(handleStorageChange)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+
+    // 清理函数
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [])
 
   return (
     <div className="p-6">
@@ -194,18 +253,20 @@ export default function WebDAVBackup() {
         <p className="text-gray-500">配置 WebDAV 服务器，自动备份插件数据到云端</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* 配置设置 */}
-        <section>
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center space-x-2">
-                <Cog6ToothIcon className="w-5 h-5 text-gray-600" />
-                <h2 className="text-lg font-medium text-gray-900">服务器配置</h2>
-              </div>
+      <div className="space-y-8">
+        {/* 上半部分：配置设置和备份管理 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+          {/* 配置设置 */}
+          <section>
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden h-full flex flex-col">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <div className="flex items-center space-x-2">
+              <Cog6ToothIcon className="w-5 h-5 text-gray-600" />
+              <h2 className="text-lg font-medium text-gray-900">服务器配置</h2>
             </div>
-            
-            <div className="p-6 space-y-4">
+          </div>
+          
+          <div className="p-6 space-y-4 flex-1">
               {/* 启用开关 */}
               <div className="flex items-center justify-between">
                 <div>
@@ -286,51 +347,32 @@ export default function WebDAVBackup() {
                   type="text"
                   value={config.backup_path}
                   onChange={(e) => setConfig(prev => ({ ...prev, backup_path: e.target.value }))}
-                  placeholder="/backups/one-api-hub/"
+                  placeholder="/webdav"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">备份文件在服务器上的存储路径</p>
               </div>
 
-              {/* 自动备份设置 */}
+              {/* 数据变动同步设置 */}
               <div className="border-t border-gray-200 pt-4">
                 <div className="flex items-center justify-between mb-3">
                   <div>
-                    <label className="text-sm font-medium text-gray-700">自动备份</label>
-                    <p className="text-xs text-gray-500">定期自动备份数据到云端</p>
+                    <label className="text-sm font-medium text-gray-700">数据变动同步</label>
+                    <p className="text-xs text-gray-500">当账号数据发生变化时自动同步到云端</p>
                   </div>
                   <button
-                    onClick={() => setConfig(prev => ({ ...prev, auto_backup: !prev.auto_backup }))}
+                    onClick={() => setConfig(prev => ({ ...prev, auto_sync_on_change: !prev.auto_sync_on_change }))}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      config.auto_backup ? 'bg-blue-600' : 'bg-gray-200'
+                      config.auto_sync_on_change ? 'bg-blue-600' : 'bg-gray-200'
                     }`}
                   >
                     <span
                       className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        config.auto_backup ? 'translate-x-6' : 'translate-x-1'
+                        config.auto_sync_on_change ? 'translate-x-6' : 'translate-x-1'
                       }`}
                     />
                   </button>
                 </div>
-
-                {config.auto_backup && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      备份间隔（小时）
-                    </label>
-                    <select
-                      value={config.backup_interval}
-                      onChange={(e) => setConfig(prev => ({ ...prev, backup_interval: parseInt(e.target.value) }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value={1}>每小时</option>
-                      <option value={6}>每6小时</option>
-                      <option value={12}>每12小时</option>
-                      <option value={24}>每天</option>
-                      <option value={168}>每周</option>
-                    </select>
-                  </div>
-                )}
               </div>
 
               {/* 操作按钮 */}
@@ -356,40 +398,51 @@ export default function WebDAVBackup() {
 
         {/* 备份管理 */}
         <section>
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <ArrowUpTrayIcon className="w-5 h-5 text-green-600" />
-                  <h2 className="text-lg font-medium text-gray-900">备份管理</h2>
-                </div>
-                {config.enabled && (
-                  <button
-                    onClick={handleBackup}
-                    disabled={isLoading}
-                    className="px-3 py-1 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
-                  >
-                    {isLoading ? '备份中...' : '立即备份'}
-                  </button>
-                )}
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden h-full flex flex-col">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <ArrowUpTrayIcon className="w-5 h-5 text-green-600" />
+                <h2 className="text-lg font-medium text-gray-900">备份管理</h2>
               </div>
+              {config.enabled && (
+                <button
+                  onClick={handleBackup}
+                  disabled={isLoading}
+                  className="px-3 py-1 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
+                >
+                  {isLoading ? '备份中...' : '立即备份'}
+                </button>
+              )}
             </div>
-            
-            <div className="p-6">
-              {!config.enabled ? (
-                <div className="text-center py-8">
+          </div>
+          
+          <div className="p-6 flex-1 flex flex-col">
+            {!config.enabled ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center">
                   <CloudIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                   <p className="text-gray-500">请先启用并配置 WebDAV 服务器</p>
                 </div>
-              ) : (
-                <div className="space-y-4">
+              </div>
+            ) : (
+              <div className="space-y-4 flex-1 flex flex-col">
                   {/* 最后备份时间 */}
-                  {config.last_backup_time && (
+                  {config.last_backup_time > 0 ? (
                     <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
                       <div className="flex items-center space-x-2">
                         <CheckCircleIcon className="w-5 h-5 text-green-600" />
                         <span className="text-sm text-green-800">
                           最后备份时间: {formatFullTime(new Date(config.last_backup_time))}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                      <div className="flex items-center space-x-2">
+                        <ExclamationTriangleIcon className="w-5 h-5 text-yellow-600" />
+                        <span className="text-sm text-yellow-800">
+                          尚未进行过备份
                         </span>
                       </div>
                     </div>
@@ -422,15 +475,19 @@ export default function WebDAVBackup() {
                               <p className="text-xs text-gray-500">
                                 {(() => {
                                   if (filename.includes('backup-')) {
-                                    const parts = filename.split('backup-')[1]?.split('-');
-                                    if (parts && parts.length >= 4) {
-                                      // 格式: backup-YYYY-MM-DD-timestamp.json
-                                      const date = parts.slice(0, 3).join('-'); // YYYY-MM-DD
-                                      const timestamp = parseInt(parts[3]?.split('.')[0] || '0');
-                                      if (timestamp > 0) {
-                                        return `备份时间: ${formatFullTime(new Date(timestamp))}`;
-                                      } else {
-                                        return `备份日期: ${date}`;
+                                    // 支持新格式: backup-YYYY-MM-DD_HH-mm-ss.json
+                                    const timeStr = filename.split('backup-')[1]?.replace('.json', '');
+                                    if (timeStr) {
+                                      try {
+                                        // 将格式转换为标准ISO格式
+                                        // backup-2024-01-15_14-30-25.json -> 2024-01-15T14:30:25
+                                        const isoStr = timeStr.replace('_', 'T').replace(/-(\d{2})-(\d{2})$/, ':$1:$2');
+                                        const date = new Date(isoStr);
+                                        if (!isNaN(date.getTime())) {
+                                          return `备份时间: ${formatFullTime(date)}`;
+                                        }
+                                      } catch (e) {
+                                        console.error('解析备份文件时间失败:', e);
                                       }
                                     }
                                   }
@@ -466,6 +523,132 @@ export default function WebDAVBackup() {
         </section>
       </div>
 
+        {/* 下半部分：同步日志 */}
+        <section>
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <ClockIcon className="w-5 h-5 text-purple-600" />
+                  <h2 className="text-lg font-medium text-gray-900">同步日志</h2>
+                  <span className="text-xs text-gray-500">({syncLogs.length} 条记录)</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={loadSyncLogs}
+                    className="text-sm text-blue-600 hover:text-blue-800"
+                  >
+                    刷新日志
+                  </button>
+                  {syncLogs.length > 0 && (
+                    <button
+                      onClick={async () => {
+                        if (confirm('确定要清除所有同步日志吗？')) {
+                          try {
+                            await chrome.storage.local.set({ webdav_sync_logs: [] })
+                            setSyncLogs([])
+                            toast.success('同步日志已清除')
+                          } catch (error) {
+                            console.error('清除日志失败:', error)
+                            toast.error('清除日志失败')
+                          }
+                        }
+                      }}
+                      className="text-sm text-red-600 hover:text-red-800"
+                    >
+                      清除日志
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              {!config.enabled || !config.auto_sync_on_change ? (
+                <div className="text-center py-8">
+                  <ClockIcon className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                  <p className="text-gray-500">
+                    {!config.enabled ? '请先启用 WebDAV 备份' : '请启用数据变动同步功能'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {syncLogs.length === 0 ? (
+                    <div className="text-center py-6 text-gray-500 text-sm">
+                      暂无同步日志
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-80 overflow-y-auto">
+                      {syncLogs.map((log, index) => (
+                        <div key={index} className={`p-3 border rounded-lg ${
+                          log.success 
+                            ? 'border-green-200 bg-green-50' 
+                            : 'border-red-200 bg-red-50'
+                        }`}>
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center space-x-2 mb-1">
+                                {log.success ? (
+                                  <CheckCircleIcon className="w-4 h-4 text-green-600 flex-shrink-0" />
+                                ) : (
+                                  <ExclamationTriangleIcon className="w-4 h-4 text-red-600 flex-shrink-0" />
+                                )}
+                                <span className={`text-sm font-medium ${
+                                  log.success ? 'text-green-800' : 'text-red-800'
+                                }`}>
+                                  {log.trigger}
+                                </span>
+                                {!log.success && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                                    失败
+                                  </span>
+                                )}
+                              </div>
+                              <div className={`text-xs ${
+                                log.success ? 'text-green-700' : 'text-red-700'
+                              }`}>
+                                <p className="break-words">{log.message}</p>
+                                {!log.success && log.message.includes('423') && (
+                                  <p className="mt-1 text-red-600 font-medium">
+                                    💡 错误码 423: 资源被锁定，可能是文件正在被其他进程使用或服务器配置问题
+                                  </p>
+                                )}
+                                {!log.success && log.message.includes('扩展后台脚本暂时不可用') && (
+                                  <p className="mt-1 text-red-600 font-medium">
+                                    💡 扩展通信错误，请尝试刷新页面或重新加载扩展
+                                  </p>
+                                )}
+                                {!log.success && log.message.includes('无法创建备份目录') && (
+                                  <p className="mt-1 text-red-600 font-medium">
+                                    💡 目录创建失败，请检查WebDAV服务器权限和路径配置
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end space-y-1 flex-shrink-0 ml-2">
+                              <span className={`text-xs ${
+                                log.success ? 'text-green-600' : 'text-red-600'
+                              }`}>
+                                {formatFullTime(new Date(log.timestamp))}
+                              </span>
+                              {log.success && log.message.includes('backup-') && (
+                                <span className="text-xs text-gray-500">
+                                  ✓ 已上传
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+      </div>
+
       {/* 使用说明 */}
       <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
         <div className="flex items-start space-x-3">
@@ -475,7 +658,8 @@ export default function WebDAVBackup() {
             <ul className="text-blue-700 space-y-1">
               <li>• 支持标准的 WebDAV 协议服务器（如 Nextcloud、ownCloud 等）</li>
               <li>• 备份文件包含所有账号数据和用户设置</li>
-              <li>• 自动备份功能会在后台定期执行，无需手动操作</li>
+              <li>• 数据变动同步功能会在账号增删改时自动触发备份</li>
+              <li>• 同步日志显示最近20条自动备份记录及触发原因</li>
               <li>• 恢复备份会覆盖当前所有数据，请谨慎操作</li>
               <li>• 建议定期检查备份文件的完整性</li>
             </ul>

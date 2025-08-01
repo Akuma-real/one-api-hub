@@ -15,9 +15,8 @@ class WebDAVService {
       server_url: '',
       username: '',
       password: '',
-      backup_path: '/backups/one-api-hub/',
-      auto_backup: false,
-      backup_interval: 24,
+      backup_path: '/webdav',
+      auto_sync_on_change: false,
       last_backup_time: 0
     }
     return this.config
@@ -28,13 +27,6 @@ class WebDAVService {
     try {
       await chrome.storage.local.set({ webdav_config: config })
       this.config = config
-      
-      // 通知后台脚本配置已更新
-      try {
-        chrome.runtime.sendMessage({ action: 'webdavConfigUpdate' })
-      } catch (error) {
-        // 忽略消息发送失败
-      }
       return true
     } catch (error) {
       console.error('保存 WebDAV 配置失败:', error)
@@ -67,57 +59,91 @@ class WebDAVService {
 
   // 发送 WebDAV 请求（处理 CORS）
   private async sendWebDAVRequest(url: string, options: RequestInit): Promise<Response> {
-    try {
-      // 在 Chrome 扩展中，我们可以使用 background script 来避免 CORS 问题
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        return new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({
-            action: 'webdavRequest',
-            url,
-            options
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message || '扩展通信失败'))
+    const maxRetries = 3
+    let lastError: Error | null = null
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // 在 Chrome 扩展中，我们可以使用 background script 来避免 CORS 问题
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          return await new Promise((resolve, reject) => {
+            // 检查 runtime 是否有效
+            if (!chrome.runtime?.id) {
+              reject(new Error('扩展运行时无效，可能正在重新加载'))
               return
             }
-            
-            if (!response) {
-              reject(new Error('未收到响应'))
-              return
-            }
-            
-            if (!response.success) {
-              reject(new Error(response.message || '请求失败'))
-              return
-            }
-            
-            // 创建一个模拟的 Response 对象
-            const responseData = response.data
-            const mockResponse = {
-              ok: responseData.ok,
-              status: responseData.status,
-              statusText: responseData.statusText,
-              headers: new Headers(responseData.headers || {}),
-              text: () => Promise.resolve(responseData.text || ''),
-              json: () => {
-                try {
-                  return Promise.resolve(JSON.parse(responseData.text || '{}'))
-                } catch (e) {
-                  return Promise.reject(new Error('JSON 解析失败'))
+
+            const timeoutId = setTimeout(() => {
+              reject(new Error('请求超时'))
+            }, 30000) // 30秒超时
+
+            chrome.runtime.sendMessage({
+              action: 'webdavRequest',
+              url,
+              options
+            }, (response) => {
+              clearTimeout(timeoutId)
+              
+              if (chrome.runtime.lastError) {
+                const errorMsg = chrome.runtime.lastError.message || '扩展通信失败'
+                // 如果是连接错误，可能是扩展正在重新加载
+                if (errorMsg.includes('Receiving end does not exist')) {
+                  reject(new Error('扩展后台脚本暂时不可用，请稍后重试'))
+                } else {
+                  reject(new Error(errorMsg))
+                }
+                return
+              }
+              
+              if (!response) {
+                reject(new Error('未收到响应'))
+                return
+              }
+              
+              if (!response.success) {
+                reject(new Error(response.message || '请求失败'))
+                return
+              }
+              
+              // 创建一个模拟的 Response 对象
+              const responseData = response.data
+              const mockResponse = {
+                ok: responseData.ok,
+                status: responseData.status,
+                statusText: responseData.statusText,
+                headers: new Headers(responseData.headers || {}),
+                text: () => Promise.resolve(responseData.text || ''),
+                json: () => {
+                  try {
+                    return Promise.resolve(JSON.parse(responseData.text || '{}'))
+                  } catch (e) {
+                    return Promise.reject(new Error('JSON 解析失败'))
+                  }
                 }
               }
-            }
-            resolve(mockResponse as Response)
+              resolve(mockResponse as Response)
+            })
           })
-        })
-      } else {
-        // 直接使用 fetch（可能受 CORS 限制）
-        return await fetch(url, options)
+        } else {
+          // 直接使用 fetch（可能受 CORS 限制）
+          return await fetch(url, options)
+        }
+      } catch (error) {
+        lastError = error as Error
+        console.error(`[WebDAV] 请求失败 (尝试 ${attempt}/${maxRetries}):`, error)
+        
+        // 如果是连接问题且还有重试机会，等待后重试
+        if (attempt < maxRetries && error.message.includes('扩展后台脚本暂时不可用')) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt)) // 递增延迟
+          continue
+        }
+        
+        // 如果不是连接问题或已达到最大重试次数，直接抛出错误
+        throw error
       }
-    } catch (error) {
-      console.error('[WebDAV] 请求发送失败:', error)
-      throw new Error(`WebDAV 请求失败: ${error.message}`)
     }
+
+    throw lastError || new Error('WebDAV 请求失败')
   }
 
   // 检查目录是否存在
@@ -227,8 +253,33 @@ class WebDAVService {
     }
   }
 
+  // 记录同步日志
+  private async addSyncLog(trigger: string, success: boolean, message: string): Promise<void> {
+    try {
+      const result = await chrome.storage.local.get(['webdav_sync_logs'])
+      const logs = result.webdav_sync_logs || []
+      
+      const newLog = {
+        timestamp: Date.now(),
+        trigger,
+        success,
+        message
+      }
+      
+      // 保留最近50条记录
+      logs.push(newLog)
+      if (logs.length > 50) {
+        logs.splice(0, logs.length - 50)
+      }
+      
+      await chrome.storage.local.set({ webdav_sync_logs: logs })
+    } catch (error) {
+      console.error('记录同步日志失败:', error)
+    }
+  }
+
   // 上传备份到 WebDAV
-  async uploadBackup(): Promise<WebDAVResult> {
+  async uploadBackup(trigger: string = '手动备份'): Promise<WebDAVResult> {
     const config = await this.getConfig()
     
     if (!config.enabled) {
@@ -261,7 +312,16 @@ class WebDAVService {
         preferences: preferencesData
       }
 
-      const filename = `backup-${new Date().toISOString().split('T')[0]}-${Date.now()}.json`
+      // 生成统一的时间戳，确保文件名和最后备份时间一致
+      const backupTimestamp = Date.now()
+      const now = new Date(backupTimestamp)
+      const year = now.getFullYear()
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const day = String(now.getDate()).padStart(2, '0')
+      const hour = String(now.getHours()).padStart(2, '0')
+      const minute = String(now.getMinutes()).padStart(2, '0')
+      const second = String(now.getSeconds()).padStart(2, '0')
+      const filename = `backup-${year}-${month}-${day}_${hour}-${minute}-${second}.json`
       const uploadUrl = this.normalizePath(config.server_url, config.backup_path) + filename
 
       const response = await this.sendWebDAVRequest(uploadUrl, {
@@ -271,24 +331,71 @@ class WebDAVService {
       })
 
       if (response.ok) {
-        // 更新最后备份时间
-        config.last_backup_time = Date.now()
+        // 使用相同的时间戳更新最后备份时间
+        config.last_backup_time = backupTimestamp
         await this.saveConfig(config)
+        
+        const successMessage = `备份上传成功: ${filename}`
+        
+        // 记录成功日志
+        await this.addSyncLog(trigger, true, successMessage)
         
         return {
           success: true,
-          message: `备份上传成功: ${filename}`
+          message: successMessage
         }
       } else {
+        // 提供更详细的错误信息
+        let errorMessage = `上传失败: ${response.status}`
+        
+        switch (response.status) {
+          case 401:
+            errorMessage += ' - 认证失败，请检查用户名和密码'
+            break
+          case 403:
+            errorMessage += ' - 权限不足，请检查账号权限'
+            break
+          case 404:
+            errorMessage += ' - 路径不存在，请检查服务器地址和备份路径'
+            break
+          case 423:
+            errorMessage += ' - 资源被锁定，文件可能正在被使用或服务器繁忙，请稍后重试'
+            break
+          case 507:
+            errorMessage += ' - 存储空间不足'
+            break
+          case 500:
+            errorMessage += ' - 服务器内部错误'
+            break
+          case 502:
+            errorMessage += ' - 网关错误，服务器暂时不可用'
+            break
+          case 503:
+            errorMessage += ' - 服务不可用，服务器暂时过载'
+            break
+          default:
+            if (response.statusText) {
+              errorMessage += ` - ${response.statusText}`
+            }
+        }
+        
+        // 记录失败日志
+        await this.addSyncLog(trigger, false, errorMessage)
+        
         return {
           success: false,
-          message: `上传失败: ${response.status} ${response.statusText}`
+          message: errorMessage
         }
       }
     } catch (error) {
+      const errorMessage = `上传错误: ${error.message}`
+      
+      // 记录异常日志
+      await this.addSyncLog(trigger, false, errorMessage)
+      
       return {
         success: false,
-        message: `上传错误: ${error.message}`
+        message: errorMessage
       }
     }
   }
@@ -502,6 +609,49 @@ class WebDAVService {
         success: false,
         message: `删除错误: ${error.message}`
       }
+    }
+  }
+
+  // 数据变动时自动同步到WebDAV
+  async syncOnDataChange(trigger: string = '数据变动'): Promise<void> {
+    try {
+      const config = await this.getConfig()
+      
+      // 检查是否启用了数据变动同步
+      if (!config.enabled || !config.auto_sync_on_change) {
+        return
+      }
+
+      console.log(`[WebDAV] ${trigger}，开始自动同步`)
+      
+      // 异步执行同步，不阻塞主流程
+      this.uploadBackup(trigger).then(result => {
+        if (result.success) {
+          console.log(`[WebDAV] ${trigger}同步成功`)
+        } else {
+          console.error(`[WebDAV] ${trigger}同步失败:`, result.message)
+          // 记录失败日志，但不抛出错误
+          this.addSyncLog(trigger, false, result.message).catch(logError => {
+            console.error('[WebDAV] 记录同步日志失败:', logError)
+          })
+        }
+      }).catch(error => {
+        const errorMessage = error.message || '未知错误'
+        console.error(`[WebDAV] ${trigger}同步异常:`, errorMessage)
+        
+        // 记录异常日志
+        this.addSyncLog(trigger, false, `同步异常: ${errorMessage}`).catch(logError => {
+          console.error('[WebDAV] 记录同步日志失败:', logError)
+        })
+      })
+    } catch (error) {
+      const errorMessage = error.message || '未知错误'
+      console.error(`[WebDAV] ${trigger}同步检查失败:`, errorMessage)
+      
+      // 记录检查失败日志
+      this.addSyncLog(trigger, false, `同步检查失败: ${errorMessage}`).catch(logError => {
+        console.error('[WebDAV] 记录同步日志失败:', logError)
+      })
     }
   }
 }

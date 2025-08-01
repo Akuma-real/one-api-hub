@@ -64,9 +64,8 @@ export interface WebDAVConfig {
   server_url: string;
   username: string;
   password: string;
-  backup_path: string; // 备份文件路径，如 /backups/one-api-hub/
-  auto_backup: boolean; // 是否启用自动备份
-  backup_interval: number; // 自动备份间隔（小时）
+  backup_path: string; // 备份文件路径，如 /webdav
+  auto_sync_on_change: boolean; // 数据变动时自动同步
   last_backup_time?: number; // 最后备份时间
 }
 

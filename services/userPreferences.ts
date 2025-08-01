@@ -1,4 +1,5 @@
 import { Storage } from "@plasmohq/storage";
+import { webdavService } from './webdavService';
 
 // 用户偏好设置类型定义
 export interface UserPreferences {
@@ -63,7 +64,7 @@ class UserPreferencesService {
   /**
    * 保存用户偏好设置
    */
-  async savePreferences(preferences: Partial<UserPreferences>): Promise<boolean> {
+  async savePreferences(preferences: Partial<UserPreferences>, skipSync: boolean = false): Promise<boolean> {
     try {
       const currentPreferences = await this.getPreferences();
       const updatedPreferences: UserPreferences = {
@@ -74,6 +75,17 @@ class UserPreferencesService {
 
       await this.storage.set(STORAGE_KEYS.USER_PREFERENCES, updatedPreferences);
       console.log('[UserPreferences] 偏好设置保存成功:', updatedPreferences);
+      
+      // 只有在不跳过同步时才触发WebDAV同步（避免重复同步）
+      if (!skipSync) {
+        try {
+          await webdavService.syncOnDataChange('设置更新');
+        } catch (error) {
+          console.error('[UserPreferences] WebDAV同步失败:', error);
+          // 不影响主流程，继续执行
+        }
+      }
+      
       return true;
     } catch (error) {
       console.error('[UserPreferences] 保存偏好设置失败:', error);
@@ -85,21 +97,52 @@ class UserPreferencesService {
    * 更新活动标签页
    */
   async updateActiveTab(activeTab: 'consumption' | 'balance'): Promise<boolean> {
-    return this.savePreferences({ activeTab });
+    const result = await this.savePreferences({ activeTab }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        const displayName = UserPreferencesUtils.getTabDisplayName(activeTab);
+        await webdavService.syncOnDataChange(`切换标签页到: ${displayName}`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
    * 更新货币类型
    */
   async updateCurrencyType(currencyType: 'USD' | 'CNY'): Promise<boolean> {
-    return this.savePreferences({ currencyType });
+    const result = await this.savePreferences({ currencyType }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        const symbol = UserPreferencesUtils.getCurrencySymbol(currencyType);
+        await webdavService.syncOnDataChange(`切换货币类型到: ${currencyType} (${symbol})`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
    * 更新排序配置
    */
   async updateSortConfig(sortField: 'name' | 'balance' | 'consumption', sortOrder: 'asc' | 'desc'): Promise<boolean> {
-    return this.savePreferences({ sortField, sortOrder });
+    const result = await this.savePreferences({ sortField, sortOrder }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        const fieldName = UserPreferencesUtils.getSortFieldDisplayName(sortField);
+        const orderName = UserPreferencesUtils.getSortOrderDisplayName(sortOrder);
+        await webdavService.syncOnDataChange(`更新排序设置: 按${fieldName}${orderName}排列`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
@@ -118,28 +161,67 @@ class UserPreferencesService {
    * 更新自动刷新开关
    */
   async updateAutoRefresh(autoRefresh: boolean): Promise<boolean> {
-    return this.savePreferences({ autoRefresh });
+    const result = await this.savePreferences({ autoRefresh }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        const status = autoRefresh ? '开启' : '关闭';
+        await webdavService.syncOnDataChange(`${status}自动刷新功能`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
    * 更新刷新间隔
    */
   async updateRefreshInterval(refreshInterval: number): Promise<boolean> {
-    return this.savePreferences({ refreshInterval });
+    const result = await this.savePreferences({ refreshInterval }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        await webdavService.syncOnDataChange(`更新刷新间隔: ${refreshInterval}秒`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
    * 更新打开插件时自动刷新设置
    */
   async updateRefreshOnOpen(refreshOnOpen: boolean): Promise<boolean> {
-    return this.savePreferences({ refreshOnOpen });
+    const result = await this.savePreferences({ refreshOnOpen }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        const status = refreshOnOpen ? '开启' : '关闭';
+        await webdavService.syncOnDataChange(`${status}打开插件时自动刷新`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
    * 更新健康状态显示设置
    */
   async updateShowHealthStatus(showHealthStatus: boolean): Promise<boolean> {
-    return this.savePreferences({ showHealthStatus });
+    const result = await this.savePreferences({ showHealthStatus }, true);
+    if (result) {
+      // 触发详细的WebDAV同步
+      try {
+        const status = showHealthStatus ? '显示' : '隐藏';
+        await webdavService.syncOnDataChange(`${status}健康状态指示器`);
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+      }
+    }
+    return result;
   }
 
   /**
@@ -187,6 +269,15 @@ class UserPreferencesService {
         lastUpdated: Date.now()
       });
       console.log('[UserPreferences] 偏好设置导入成功');
+      
+      // 触发WebDAV数据变动同步
+      try {
+        await webdavService.syncOnDataChange('设置导入');
+      } catch (error) {
+        console.error('[UserPreferences] WebDAV同步失败:', error);
+        // 不影响主流程，继续执行
+      }
+      
       return true;
     } catch (error) {
       console.error('[UserPreferences] 导入偏好设置失败:', error);
