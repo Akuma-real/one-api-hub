@@ -5,6 +5,7 @@ import {
   CpuChipIcon,
   KeyIcon,
   ArrowPathIcon,
+  CloudIcon,
   InformationCircleIcon
 } from "@heroicons/react/24/outline"
 import { Toaster } from 'react-hot-toast'
@@ -15,6 +16,7 @@ import BasicSettings from "./pages/BasicSettings"
 import ModelList from "./pages/ModelList"
 import KeyManagement from "./pages/KeyManagement"
 import ImportExport from "./pages/ImportExport"
+import WebDAVBackup from "./pages/WebDAVBackup"
 import About from "./pages/About"
 
 // 菜单项类型定义
@@ -50,6 +52,12 @@ const menuItems: MenuItem[] = [
     name: '导入/导出',
     icon: ArrowPathIcon,
     component: ImportExport
+  },
+  {
+    id: 'webdav-backup',
+    name: 'WebDAV 备份',
+    icon: CloudIcon,
+    component: WebDAVBackup
   },
   {
     id: 'about',

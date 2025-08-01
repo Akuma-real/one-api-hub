@@ -41,11 +41,14 @@
   },
   "manifest": {
     "host_permissions": [
-      "https://*/*"
+      "https://*/*",
+      "http://*/*"
     ],
     "permissions": [
       "tabs",
-      "storage"
+      "storage",
+      "webRequest",
+      "webRequestBlocking"
     ]
   }
 }

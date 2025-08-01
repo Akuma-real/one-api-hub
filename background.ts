@@ -1,19 +1,63 @@
 import { autoRefreshService, handleAutoRefreshMessage } from './services/autoRefreshService';
+import { webdavService } from './services/webdavService';
 
 // 管理临时窗口的 Map
 const tempWindows = new Map<string, number>()
 
-// 插件启动时初始化自动刷新服务
+// 插件启动时初始化服务
 chrome.runtime.onStartup.addListener(async () => {
-  console.log('[Background] 插件启动，初始化自动刷新服务');
+  console.log('[Background] 插件启动，初始化服务');
   await autoRefreshService.initialize();
+  await initializeWebdavAutoBackup();
 });
 
-// 插件安装时初始化自动刷新服务
+// 插件安装时初始化服务
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Background] 插件安装/更新，初始化自动刷新服务');
+  console.log('[Background] 插件安装/更新，初始化服务');
   await autoRefreshService.initialize();
+  await initializeWebdavAutoBackup();
 });
+
+// 初始化 WebDAV 自动备份
+async function initializeWebdavAutoBackup() {
+  try {
+    const config = await webdavService.getConfig();
+    if (config.enabled && config.auto_backup) {
+      console.log('[Background] 启动 WebDAV 自动备份检查');
+      checkWebdavAutoBackup();
+      // 设置定时检查（每小时检查一次）
+      setInterval(checkWebdavAutoBackup, 60 * 60 * 1000);
+    }
+  } catch (error) {
+    console.error('[Background] WebDAV 自动备份初始化失败:', error);
+  }
+}
+
+// 检查是否需要执行自动备份
+async function checkWebdavAutoBackup() {
+  try {
+    const config = await webdavService.getConfig();
+    if (!config.enabled || !config.auto_backup) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastBackupTime = config.last_backup_time || 0;
+    const intervalMs = config.backup_interval * 60 * 60 * 1000; // 转换为毫秒
+
+    if (now - lastBackupTime >= intervalMs) {
+      console.log('[Background] 执行 WebDAV 自动备份');
+      const result = await webdavService.uploadBackup();
+      if (result.success) {
+        console.log('[Background] WebDAV 自动备份成功');
+      } else {
+        console.error('[Background] WebDAV 自动备份失败:', result.message);
+      }
+    }
+  } catch (error) {
+    console.error('[Background] WebDAV 自动备份检查失败:', error);
+  }
+}
 
 // 处理来自 popup 的消息
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
@@ -36,6 +80,12 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action && request.action.startsWith('autoRefresh') || 
       ['setupAutoRefresh', 'refreshNow', 'stopAutoRefresh', 'updateAutoRefreshSettings', 'getAutoRefreshStatus'].includes(request.action)) {
     handleAutoRefreshMessage(request, sendResponse);
+    return true;
+  }
+
+  // 处理 WebDAV 相关消息
+  if (['webdavBackup', 'webdavRestore', 'webdavTest', 'webdavConfigUpdate', 'webdavRequest'].includes(request.action)) {
+    handleWebdavMessage(request, sendResponse);
     return true;
   }
 })
@@ -175,6 +225,74 @@ function waitForTabComplete(tabId: number): Promise<void> {
     
     checkStatus()
   })
+}
+
+// 处理 WebDAV HTTP 请求（解决 CORS 问题）
+async function handleWebdavHttpRequest(url: string, options: RequestInit) {
+  try {
+    console.log('[Background] 发送 WebDAV 请求:', url, options);
+    
+    const response = await fetch(url, options);
+    const responseText = await response.text();
+    
+    const responseData = {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      text: responseText
+    };
+    
+    console.log('[Background] WebDAV 响应:', responseData);
+    
+    return { success: true, data: responseData };
+  } catch (error) {
+    console.error('[Background] WebDAV HTTP 请求失败:', error);
+    return { 
+      success: false, 
+      message: error.message || '网络请求失败'
+    };
+  }
+}
+
+// 处理 WebDAV 相关消息
+async function handleWebdavMessage(request: any, sendResponse: Function) {
+  try {
+    switch (request.action) {
+      case 'webdavBackup':
+        const backupResult = await webdavService.uploadBackup();
+        sendResponse(backupResult);
+        break;
+      
+      case 'webdavRestore':
+        const restoreResult = await webdavService.downloadBackup(request.filename);
+        sendResponse(restoreResult);
+        break;
+      
+      case 'webdavTest':
+        const testResult = await webdavService.testConnection();
+        sendResponse(testResult);
+        break;
+      
+      case 'webdavConfigUpdate':
+        // 配置更新后重新初始化自动备份
+        await initializeWebdavAutoBackup();
+        sendResponse({ success: true });
+        break;
+      
+      case 'webdavRequest':
+        // 处理 WebDAV HTTP 请求（解决 CORS 问题）
+        const requestResult = await handleWebdavHttpRequest(request.url, request.options);
+        sendResponse(requestResult);
+        break;
+      
+      default:
+        sendResponse({ success: false, message: '未知的 WebDAV 操作' });
+    }
+  } catch (error) {
+    console.error('[Background] WebDAV 操作失败:', error);
+    sendResponse({ success: false, message: error.message });
+  }
 }
 
 // 监听窗口关闭事件，清理记录

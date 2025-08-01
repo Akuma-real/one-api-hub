@@ -5,16 +5,41 @@ import {
   ArrowDownTrayIcon,
   DocumentIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  CloudIcon
 } from "@heroicons/react/24/outline"
 import { accountStorage } from "../../services/accountStorage"
 import { userPreferences } from "../../services/userPreferences"
+import { webdavService } from "../../services/webdavService"
+import { WebDAVConfig } from "../../types"
 import toast from 'react-hot-toast'
 
 export default function ImportExport() {
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [importData, setImportData] = useState("")
+
+  // WebDAV 快速备份
+  const handleWebdavBackup = async () => {
+    try {
+      const config = await webdavService.getConfig()
+      
+      if (!config?.enabled) {
+        toast.error('请先在 WebDAV 备份页面配置并启用云备份功能')
+        return
+      }
+
+      const result = await webdavService.uploadBackup()
+      if (result.success) {
+        toast.success(result.message)
+      } else {
+        toast.error(result.message)
+      }
+    } catch (error) {
+      console.error('WebDAV 备份失败:', error)
+      toast.error('WebDAV 备份失败')
+    }
+  }
 
   // 导出所有数据
   const handleExportAll = async () => {
@@ -230,6 +255,9 @@ export default function ImportExport() {
         <p className="text-gray-500">备份和恢复插件数据</p>
       </div>
 
+      {/* WebDAV 云备份快捷操作 */}
+      <WebDAVQuickActions onBackup={handleWebdavBackup} />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* 导出数据 */}
         <section>
@@ -401,6 +429,68 @@ export default function ImportExport() {
               <li>• 导入的账号数据包含敏感信息，请确保文件来源可信</li>
             </ul>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// WebDAV 快捷操作组件
+function WebDAVQuickActions({ onBackup }: { onBackup: () => void }) {
+  const [config, setConfig] = useState<WebDAVConfig | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  const checkAndLoadConfig = async () => {
+    if (loaded) return config
+    
+    try {
+      const webdavConfig = await webdavService.getConfig()
+      setConfig(webdavConfig)
+      setLoaded(true)
+      return webdavConfig
+    } catch (error) {
+      console.error('加载 WebDAV 配置失败:', error)
+      setLoaded(true)
+      return null
+    }
+  }
+
+  // 如果还没有加载配置，先加载
+  if (!loaded) {
+    checkAndLoadConfig()
+    return null // 加载中不显示任何内容
+  }
+
+  // 如果 WebDAV 未启用，不显示快捷操作
+  if (!config?.enabled) {
+    return null
+  }
+
+  return (
+    <div className="mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <CloudIcon className="w-6 h-6 text-blue-600" />
+          <div>
+            <h3 className="text-lg font-medium text-gray-900">WebDAV 云备份</h3>
+            <p className="text-sm text-gray-500">
+              已启用云备份功能，可以快速备份到云端或前往详细管理页面
+            </p>
+          </div>
+        </div>
+        <div className="flex space-x-3">
+          <button
+            onClick={onBackup}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            立即云备份
+          </button>
+          <button
+            onClick={() => window.location.hash = '#webdav-backup'}
+            className="px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors"
+          >
+            管理云备份
+          </button>
         </div>
       </div>
     </div>

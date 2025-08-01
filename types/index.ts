@@ -58,6 +58,30 @@ export type SortOrder = 'asc' | 'desc';
 // 货币类型
 export type CurrencyType = 'USD' | 'CNY';
 
+// WebDAV 配置类型
+export interface WebDAVConfig {
+  enabled: boolean;
+  server_url: string;
+  username: string;
+  password: string;
+  backup_path: string; // 备份文件路径，如 /backups/one-api-hub/
+  auto_backup: boolean; // 是否启用自动备份
+  backup_interval: number; // 自动备份间隔（小时）
+  last_backup_time?: number; // 最后备份时间
+}
+
+// WebDAV 备份状态
+export type WebDAVBackupStatus = 'idle' | 'uploading' | 'downloading' | 'success' | 'error';
+
+// WebDAV 操作结果
+export interface WebDAVResult {
+  success: boolean;
+  message: string;
+  timestamp?: number;
+  data?: any;
+  files?: string[];
+}
+
 // 展示用的站点数据 (兼容当前 UI)
 export interface DisplaySiteData {
   id: string;
