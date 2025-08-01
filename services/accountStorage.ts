@@ -89,7 +89,11 @@ class AccountStorageService {
   /**
    * 更新账号信息
    */
-  async updateAccount(id: string, updates: Partial<Omit<SiteAccount, 'id' | 'created_at'>>): Promise<boolean> {
+  async updateAccount(
+    id: string, 
+    updates: Partial<Omit<SiteAccount, 'id' | 'created_at'>>, 
+    triggerSync: boolean = true
+  ): Promise<boolean> {
     try {
       const accounts = await this.getAllAccounts();
       const index = accounts.findIndex(account => account.id === id);
@@ -115,7 +119,8 @@ class AccountStorageService {
         updateDescription += ` (状态: ${updates.health_status})`;
       }
 
-      await this.saveAccounts(accounts, updateDescription);
+      // 根据 triggerSync 参数决定是否触发WebDAV同步
+      await this.saveAccounts(accounts, triggerSync ? updateDescription : undefined);
       return true;
     } catch (error) {
       console.error('更新账号失败:', error);
@@ -153,7 +158,7 @@ class AccountStorageService {
     return this.updateAccount(id, { 
       last_sync_time: Date.now(),
       updated_at: Date.now()
-    });
+    }, false); // 同步时间更新不触发WebDAV同步
   }
 
   /**
@@ -191,8 +196,8 @@ class AccountStorageService {
         };
       }
 
-      // 更新账号信息
-      const updateSuccess = await this.updateAccount(id, updateData);
+      // 更新账号信息 - 数据刷新不触发WebDAV同步
+      const updateSuccess = await this.updateAccount(id, updateData, false);
       
       // 记录健康状态变化
       if (account.health_status !== result.healthStatus.status) {
@@ -203,12 +208,12 @@ class AccountStorageService {
       return updateSuccess;
     } catch (error) {
       console.error('刷新账号数据失败:', error);
-      // 在出现异常时也尝试更新健康状态为unknown
+      // 在出现异常时也尝试更新健康状态为unknown - 同样不触发WebDAV同步
       try {
         await this.updateAccount(id, {
           health_status: 'unknown',
           last_sync_time: Date.now()
-        });
+        }, false);
       } catch (updateError) {
         console.error('更新健康状态失败:', updateError);
       }
@@ -383,12 +388,14 @@ class AccountStorageService {
     await this.storage.set(STORAGE_KEYS.ACCOUNTS, config);
     console.log('[AccountStorage] 账号数据保存完成');
     
-    // 触发WebDAV数据变动同步
-    try {
-      await webdavService.syncOnDataChange(trigger || '数据变动');
-    } catch (error) {
-      console.error('[AccountStorage] WebDAV同步失败:', error);
-      // 不影响主流程，继续执行
+    // 只有在提供了 trigger 参数时才触发WebDAV同步
+    if (trigger) {
+      try {
+        await webdavService.syncOnDataChange(trigger);
+      } catch (error) {
+        console.error('[AccountStorage] WebDAV同步失败:', error);
+        // 不影响主流程，继续执行
+      }
     }
   }
 
