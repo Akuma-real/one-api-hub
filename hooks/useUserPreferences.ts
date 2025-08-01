@@ -75,17 +75,23 @@ export function useUserPreferences() {
   // 更新自动刷新设置
   const updateAutoRefresh = useCallback(async (autoRefresh: boolean) => {
     try {
+      // 立即更新本地状态，提供即时反馈
+      setPreferences(prev => prev ? { ...prev, autoRefresh } : null);
+      
       const success = await userPreferences.updateAutoRefresh(autoRefresh);
-      if (success && preferences) {
-        setPreferences(prev => prev ? { ...prev, autoRefresh } : null);
-        console.log('[useUserPreferences] 自动刷新设置更新成功:', autoRefresh);
+      if (!success) {
+        // 如果保存失败，回滚状态
+        setPreferences(prev => prev ? { ...prev, autoRefresh: !autoRefresh } : null);
       }
+      console.log('[useUserPreferences] 自动刷新设置更新成功:', autoRefresh);
       return success;
     } catch (error) {
       console.error('[useUserPreferences] 更新自动刷新设置失败:', error);
+      // 回滚状态
+      setPreferences(prev => prev ? { ...prev, autoRefresh: !autoRefresh } : null);
       return false;
     }
-  }, [preferences]);
+  }, []);
 
   // 更新刷新间隔
   const updateRefreshInterval = useCallback(async (refreshInterval: number) => {
@@ -105,17 +111,23 @@ export function useUserPreferences() {
   // 更新打开插件时自动刷新设置
   const updateRefreshOnOpen = useCallback(async (refreshOnOpen: boolean) => {
     try {
+      // 立即更新本地状态，提供即时反馈
+      setPreferences(prev => prev ? { ...prev, refreshOnOpen } : null);
+      
       const success = await userPreferences.updateRefreshOnOpen(refreshOnOpen);
-      if (success && preferences) {
-        setPreferences(prev => prev ? { ...prev, refreshOnOpen } : null);
-        console.log('[useUserPreferences] 打开插件时自动刷新设置更新成功:', refreshOnOpen);
+      if (!success) {
+        // 如果保存失败，回滚状态
+        setPreferences(prev => prev ? { ...prev, refreshOnOpen: !refreshOnOpen } : null);
       }
+      console.log('[useUserPreferences] 打开插件时自动刷新设置更新成功:', refreshOnOpen);
       return success;
     } catch (error) {
       console.error('[useUserPreferences] 更新打开插件时自动刷新设置失败:', error);
+      // 回滚状态
+      setPreferences(prev => prev ? { ...prev, refreshOnOpen: !refreshOnOpen } : null);
       return false;
     }
-  }, [preferences]);
+  }, []);
 
   // 更新健康状态显示设置
   const updateShowHealthStatus = useCallback(async (showHealthStatus: boolean) => {

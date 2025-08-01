@@ -50,15 +50,20 @@ export default function BasicSettings() {
   }
 
   const handleAutoRefreshChange = async (enabled: boolean) => {
-    const success = await updateAutoRefresh(enabled)
-    if (success) {
-      // 通知后台更新设置
-      chrome.runtime.sendMessage({
-        action: 'updateAutoRefreshSettings',
-        settings: { autoRefresh: enabled }
-      });
-      toast.success(`自动刷新已${enabled ? '启用' : '关闭'}`)
-    } else {
+    try {
+      const success = await updateAutoRefresh(enabled)
+      if (success) {
+        // 通知后台更新设置
+        chrome.runtime.sendMessage({
+          action: 'updateAutoRefreshSettings',
+          settings: { autoRefresh: enabled }
+        });
+        toast.success(`自动刷新已${enabled ? '启用' : '关闭'}`)
+      } else {
+        toast.error('设置保存失败')
+      }
+    } catch (error) {
+      console.error('更新自动刷新设置失败:', error)
       toast.error('设置保存失败')
     }
   }
@@ -94,10 +99,15 @@ export default function BasicSettings() {
   }
 
   const handleRefreshOnOpenChange = async (enabled: boolean) => {
-    const success = await updateRefreshOnOpen(enabled)
-    if (success) {
-      toast.success(`打开插件时自动刷新已${enabled ? '启用' : '关闭'}`)
-    } else {
+    try {
+      const success = await updateRefreshOnOpen(enabled)
+      if (success) {
+        toast.success(`打开插件时自动刷新已${enabled ? '启用' : '关闭'}`)
+      } else {
+        toast.error('设置保存失败')
+      }
+    } catch (error) {
+      console.error('更新打开插件时自动刷新设置失败:', error)
       toast.error('设置保存失败')
     }
   }
